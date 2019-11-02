@@ -1,0 +1,239 @@
+# Helper to dynamically allocate memory on the heap.
+#
+# We'd like to be able to write tests for functions that allocate memory,
+# making assertions on the precise addresses used. To achieve this we'll pass
+# in an *allocation descriptor* to allocate from.
+#
+# Allocation descriptors are also useful outside of tests. Assembly and machine
+# code are of necessity unsafe languages, and one of the most insidious kinds
+# of bugs unsafe languages expose us to are dangling pointers to memory that
+# has been freed and potentially even reused for something totally different.
+# To reduce the odds of such "use after free" errors, SubX programs tend to not
+# reclaim and reuse dynamically allocated memory. (Running out of memory is far
+# easier to debug.) Long-running programs that want to reuse memory are mostly
+# on their own to be careful. However, they do get one bit of help: they can
+# carve out chunks of memory and then allocate from them manually using this
+# very same 'allocate' helper. They just need a new allocation descriptor for
+# their book-keeping.
+
+== data
+
+# A default allocation descriptor for programs to use.
+Heap:
+  # curr
+  0/imm32
+  # limit
+  0/imm32
+
+# a reasonable default
+Heap-size:
+  0x200000/imm32/2MB
+#?   # TODO: reclaim space allocated in tests.
+#?   0x2000000/imm32/32MB
+
+== code
+#   instruction                     effective address                                                   register    displacement    immediate
+# . op          subop               mod             rm32          base        index         scale       r32
+# . 1-3 bytes   3 bits              2 bits          3 bits        3 bits      3 bits        2 bits      2 bits      0/1/2/4 bytes   0/1/2/4 bytes
+
+# Let's start initializing the default allocation descriptor.
+
+Entry:
+    # initialize heap
+    # . Heap = new-segment(Heap-size)
+    # . . push args
+    68/push  Heap/imm32
+    68/push  Heap-size/imm32
+    # . . call
+    e8/call  new-segment/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+
+    e8/call  run-tests/disp32  # 'run-tests' is a function created automatically by SubX. It calls all functions that start with 'test-'.
+$array-equal-main:end:
+    # syscall(exit, Num-test-failures)
+    8b/copy                         0/mod/indirect  5/rm32/.disp32            .             .           3/r32/ebx   Num-test-failures/disp32          # copy *Num-test-failures to ebx
+    b8/copy-to-eax  1/imm32/exit
+    cd/syscall  0x80/imm8
+
+# Claim the next 'n' bytes of memory starting at ad->curr and update ad->curr.
+# Abort if there isn't enough memory in 'ad'.
+allocate:  # ad : (address allocation-descriptor), n : int -> address-or-null/eax
+    # . prologue
+    55/push-ebp
+    89/copy                         3/mod/direct    5/rm32/ebp    .           .             .           4/r32/esp   .               .                 # copy esp to ebp
+    # . save registers
+    51/push-ecx
+    52/push-edx
+    # ecx = ad
+    8b/copy                         1/mod/*+disp8   5/rm32/ebp    .           .             .           1/r32/ecx   8/disp8         .                 # copy *(ebp+8) to ecx
+    # save ad->curr
+    8b/copy                         0/mod/indirect  1/rm32/ecx    .           .             .           0/r32/eax   .               .                 # copy *ecx to eax
+    # check if there's enough space
+    # . edx = ad->curr + n
+    89/copy                         3/mod/direct    2/rm32/edx    .           .             .           0/r32/eax   .               .                 # copy eax to edx
+    03/add                          1/mod/*+disp8   5/rm32/ebp    .           .             .           2/r32/edx   0xc/disp8       .                 # add *(ebp+12) to edx
+    3b/compare                      1/mod/*+disp8   1/rm32/ecx    .           .             .           2/r32/edx   4/disp8         .                 # compare edx with *(ecx+4)
+    73/jump-if-greater-or-equal-signed  $allocate:abort/disp8
+$allocate:commit:
+    # update ad->curr
+    89/copy                         0/mod/indirect  1/rm32/ecx    .           .             .           2/r32/edx   .               .                 # copy edx to *ecx
+$allocate:end:
+    # . restore registers
+    5a/pop-to-edx
+    59/pop-to-ecx
+    # . epilogue
+    89/copy                         3/mod/direct    4/rm32/esp    .           .             .           5/r32/ebp   .               .                 # copy ebp to esp
+    5d/pop-to-ebp
+    c3/return
+
+$allocate:abort:
+    # . _write(2/stderr, error)
+    # . . push args
+    68/push  "allocate: failed to allocate\n"/imm32
+    68/push  2/imm32/stderr
+    # . . call
+    e8/call  _write/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+    # . syscall(exit, 1)
+    bb/copy-to-ebx  1/imm32
+    b8/copy-to-eax  1/imm32/exit
+    cd/syscall  0x80/imm8
+    # never gets here
+
+test-allocate-success:
+    # . prologue
+    55/push-ebp
+    89/copy                         3/mod/direct    5/rm32/ebp    .           .             .           4/r32/esp   .               .                 # copy esp to ebp
+    # var ad/ecx : (address allocation-descriptor) = {11, 15}
+    68/push  0xf/imm32/limit
+    68/push  0xb/imm32/curr
+    89/copy                         3/mod/direct    1/rm32/ecx    .           .             .           4/r32/esp   .               .                 # copy esp to ecx
+    # eax = allocate(ad, 3)
+    # . . push args
+    68/push  3/imm32
+    51/push-ecx
+    # . . call
+    e8/call  allocate/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+    # check-ints-equal(eax, 11, msg)
+    # . . push args
+    68/push  "F - test-allocate-success: returns current pointer of allocation descriptor"/imm32
+    68/push  0xb/imm32
+    50/push-eax
+    # . . call
+    e8/call  check-ints-equal/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               0xc/imm32         # add to esp
+    # check-ints-equal(ad->curr, 14, msg)
+    # . . push args
+    68/push  "F - test-allocate-success: updates allocation descriptor"/imm32
+    68/push  0xe/imm32
+    ff          6/subop/push        0/mod/indirect  1/rm32/ecx    .           .             .           .           .               .                 # push *ecx
+    # . . call
+    e8/call  check-ints-equal/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               0xc/imm32         # add to esp
+    # . epilogue
+    89/copy                         3/mod/direct    4/rm32/esp    .           .             .           5/r32/ebp   .               .                 # copy ebp to esp
+    5d/pop-to-ebp
+    c3/return
+
+_pending-test-allocate-failure:
+    # . prologue
+    55/push-ebp
+    89/copy                         3/mod/direct    5/rm32/ebp    .           .             .           4/r32/esp   .               .                 # copy esp to ebp
+    # var ad/ecx : (address allocation-descriptor) = {11, 15}
+    68/push  0xf/imm32/limit
+    68/push  0xb/imm32/curr
+    89/copy                         3/mod/direct    1/rm32/ecx    .           .             .           4/r32/esp   .               .                 # copy esp to ecx
+    # eax = allocate(ad, 6)
+    # . . push args
+    68/push  6/imm32
+    51/push-ecx
+    # . . call
+    e8/call  allocate/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+    # check-ints-equal(eax, 0, msg)
+    # . . push args
+    68/push  "F - test-allocate-failure: returns null"/imm32
+    68/push  0/imm32
+    50/push-eax
+    # . . call
+    e8/call  check-ints-equal/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               0xc/imm32         # add to esp
+    # no change to ad->curr
+    # . check-ints-equal(ad->curr, 11)
+    # . . push args
+    68/push  "F - test-allocate-failure: updates allocation descriptor"/imm32
+    68/push  0xb/imm32
+    ff          6/subop/push        0/mod/indirect  1/rm32/ecx    .           .             .           .           .               .                 # push *ecx
+    # . . call
+    e8/call  check-ints-equal/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               0xc/imm32         # add to esp
+    # . epilogue
+    89/copy                         3/mod/direct    4/rm32/esp    .           .             .           5/r32/ebp   .               .                 # copy ebp to esp
+    5d/pop-to-ebp
+    c3/return
+
+# helper: create a nested allocation descriptor (useful for tests)
+allocate-region:  # ad : (address allocation-descriptor), n : int -> new-ad : (address allocation-descriptor)
+    # . prologue
+    55/push-ebp
+    89/copy                         3/mod/direct    5/rm32/ebp    .           .             .           4/r32/esp   .               .                 # copy esp to ebp
+    # . save registers
+    51/push-ecx
+    # eax = allocate(ad, n)
+    # . . push args
+    ff          6/subop/push        1/mod/*+disp8   5/rm32/ebp    .           .             .           .           0xc/disp8       .                 # push *(ebp+12)
+    ff          6/subop/push        1/mod/*+disp8   5/rm32/ebp    .           .             .           .           8/disp8         .                 # push *(ebp+8)
+    # . . call
+    e8/call  allocate/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+    # if (eax == 0) abort
+    3d/compare-eax-and  0/imm32
+    74/jump-if-equal  $allocate-region:abort/disp8
+    # earmark 8 bytes at the start for a new allocation descriptor
+    # . *eax = eax + 8
+    89/copy                         3/mod/direct    1/rm32/ecx    .           .             .           0/r32/eax   .               .                 # copy eax to ecx
+    81          0/subop/add         3/mod/direct    1/rm32/ecx    .           .             .           .           .               8/imm32           # add to ecx
+    89/copy                         0/mod/indirect  0/rm32/eax    .           .             .           1/r32/ecx   .               .                 # copy ecx to *eax
+    # . *(eax+4) = eax + n
+    89/copy                         3/mod/direct    1/rm32/ecx    .           .             .           0/r32/eax   .               .                 # copy eax to ecx
+    03/add                          1/mod/*+disp8   5/rm32/ebp    .           .             .           1/r32/ecx   0xc/disp8       .                 # add *(ebp+12) to ecx
+    89/copy                         1/mod/*+disp8   0/rm32/eax    .           .             .           1/r32/ecx   4/disp8         .                 # copy ecx to *(eax+4)
+    # . restore registers
+    59/pop-to-ecx
+    # . epilogue
+    89/copy                         3/mod/direct    4/rm32/esp    .           .             .           5/r32/ebp   .               .                 # copy ebp to esp
+    5d/pop-to-ebp
+    c3/return
+
+# We could create a more general '$abort' jump target, but then we'd need to do
+# a conditional jump followed by loading the error message and an unconditional
+# jump. Or we'd need to unconditionally load the error message before a
+# conditional jump, even if it's unused the vast majority of the time. This way
+# we bloat a potentially cold segment in RAM so we can abort with a single
+# instruction.
+$allocate-region:abort:
+    # . _write(2/stderr, error)
+    # . . push args
+    68/push  "allocate-region: failed to allocate\n"/imm32
+    68/push  2/imm32/stderr
+    # . . call
+    e8/call  _write/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+    # . syscall(exit, 1)
+    bb/copy-to-ebx  1/imm32
+    b8/copy-to-eax  1/imm32/exit
+    cd/syscall  0x80/imm8
+    # never gets here
+
+# . . vim:nowrap:textwidth=0

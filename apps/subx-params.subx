@@ -1,0 +1,15 @@
+# Various knobs for translating SubX programs using SubX.
+
+== data
+
+# largest segment that can be translated
+Segment-size:
+  0x80000/imm32/512KB
+
+# maximum size of input textual stream (spanning all segments)
+Input-size:
+  0x100000/imm32/1MB
+
+# number of labels we can translate to addresses
+Max-labels:
+  0x10000/imm32/4K-labels/64KB

@@ -1,0 +1,23 @@
+#!/usr/bin/env zsh
+# Helper to more conveniently open commonly-used SubX programs.
+
+if [ $# -eq 0 ]
+then
+  echo "Usage: $0 <file root without subdirectory or .subx extension>"
+  echo
+  echo "Naming convention: Files starting with 'ex' will be assumed to live in examples/"
+  echo "Other files will be assumed to live in apps/"
+  exit 1
+fi
+
+if [[ $EDITOR == *'vim'* ]]
+then
+  LOCAL_SETTINGS='-S vimrc.vim'
+fi
+
+if [[ $1 == 'ex'* ]]
+then
+  eval $EDITOR $LOCAL_SETTINGS examples/$1.subx
+else
+  eval $EDITOR $LOCAL_SETTINGS apps/$1.subx
+fi

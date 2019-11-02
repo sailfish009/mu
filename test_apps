@@ -1,0 +1,316 @@
+#!/bin/sh
+# Build and test all included SubX programs:
+#   translate them into ELF binaries
+#   compare the generated binaries with what's already in git
+#   run/test the ELF binaries in emulated mode (unless $NO_EMULATION)
+#   run/test the ELF binaries in native mode (if on Linux)
+#
+# Example usage:
+#   test_apps  # compare generated binaries, run them in emulated and native mode
+#   test_apps record  # run binaries in emulated and native mode
+#   NO_EMULATION=1 test_apps  # compare generated binaries, run them in native mode
+#   NO_EMULATION=1 test_apps record  # run binaries just in native mode
+
+set -e
+cd `dirname $0`
+
+test $NO_EMULATION  ||  EMULATED=1
+test $EMULATED  &&  echo 'testing emulated runs'
+test `uname` = 'Linux'  &&  NATIVE=1
+test $NATIVE  &&  echo 'testing native runs'
+
+./build
+
+export OS=${OS:-linux}
+
+echo "== translating and running using C++"
+
+# example programs
+
+echo ex1
+./subx translate init.$OS examples/ex1.subx  -o examples/ex1
+test "$1" = 'record'  ||  git diff --exit-code examples/ex1
+test $EMULATED  &&  {
+  ./subx run examples/ex1  ||  ret=$?
+  test $ret -eq 42  # life, the universe and everything
+}
+test $NATIVE  &&  {
+  examples/ex1  ||  ret=$?
+  test $ret -eq 42  # life, the universe and everything
+}
+
+echo ex2
+./subx translate init.$OS examples/ex2.subx  -o examples/ex2
+test "$1" = 'record'  ||  git diff --exit-code examples/ex2
+test $EMULATED  &&  {
+  ./subx run examples/ex2  ||  ret=$?
+  test $ret -eq 2  # 1 + 1
+}
+test $NATIVE  &&  {
+  examples/ex2  ||  ret=$?
+  test $ret -eq 2  # 1 + 1
+}
+
+echo ex3
+./subx translate init.$OS examples/ex3.subx  -o examples/ex3
+test "$1" = 'record'  ||  git diff --exit-code examples/ex3
+test $EMULATED  &&  {
+  ./subx run examples/ex3  ||  ret=$?
+  test $ret -eq 55  # 1 + 2 + ... + 10
+}
+test $NATIVE  &&  {
+  examples/ex3  ||  ret=$?
+  test $ret -eq 55  # 1 + 2 + ... + 10
+}
+
+echo ex4
+./subx translate init.$OS examples/ex4.subx  -o examples/ex4
+test "$1" = 'record'  ||  git diff --exit-code examples/ex4
+test $EMULATED  &&  {
+  echo a | ./subx run examples/ex4 >ex4.out  ||  true
+  test `cat ex4.out` = 'a'
+}
+test $NATIVE  &&  {
+  echo a | examples/ex4 >ex4.out  ||  true
+  test `cat ex4.out` = 'a'
+}
+
+echo ex5
+./subx translate init.$OS examples/ex5.subx  -o examples/ex5
+test "$1" = 'record'  ||  git diff --exit-code examples/ex5
+test $EMULATED  &&  {
+  echo a | ./subx run examples/ex5 >ex5.out  ||  true
+  test `cat ex5.out` = 'a'
+}
+test $NATIVE  &&  {
+  echo a | examples/ex5 >ex5.out  ||  true
+  test `cat ex5.out` = 'a'
+}
+
+echo ex6
+./subx translate init.$OS examples/ex6.subx  -o examples/ex6
+test "$1" = 'record'  ||  git diff --exit-code examples/ex6
+test $EMULATED  &&  {
+  ./subx run examples/ex6 >ex6.out  ||  true
+  test "`cat ex6.out`" = 'Hello, world!'
+}
+test $NATIVE  &&  {
+  examples/ex6 >ex6.out  ||  true
+  test "`cat ex6.out`" = 'Hello, world!'
+}
+
+echo ex7
+./subx translate init.$OS examples/ex7.subx  -o examples/ex7
+test "$1" = 'record'  ||  git diff --exit-code examples/ex7
+test $EMULATED  &&  {
+  ./subx run examples/ex7  ||  ret=$?
+  test $ret -eq 97  # 'a'
+}
+test $NATIVE  &&  {
+  examples/ex7  ||  ret=$?
+  test $ret -eq 97  # 'a'
+}
+
+echo ex8
+./subx translate init.$OS examples/ex8.subx  -o examples/ex8
+test "$1" = 'record'  || git diff --exit-code examples/ex8
+test $EMULATED  &&  {
+  ./subx run examples/ex8 abcd  ||  ret=$?
+  test $ret -eq 4  # length('abcd')
+}
+test $NATIVE  &&  {
+  examples/ex8 abcd  ||  ret=$?
+  test $ret -eq 4  # length('abcd')
+}
+
+echo ex9
+./subx translate init.$OS examples/ex9.subx  -o examples/ex9
+test "$1" = 'record'  || git diff --exit-code examples/ex9
+test $EMULATED  &&  {
+  ./subx run examples/ex9 z x  ||  ret=$?
+  test $ret -eq 2  # 'z' - 'x'
+}
+test $NATIVE  &&  {
+  examples/ex9 z x  ||  ret=$?
+  test $ret -eq 2  # 'z' - 'x'
+}
+
+echo ex10
+./subx translate init.$OS examples/ex10.subx  -o examples/ex10
+test "$1" = 'record'  || git diff --exit-code examples/ex10
+test $EMULATED  &&  {
+  ./subx run examples/ex10 abc abc  ||  ret=$?
+  test $ret -eq 1  # equal
+  ./subx run examples/ex10 abc abcd  # 0; not equal
+}
+test $NATIVE  &&  {
+  examples/ex10 abc abc  ||  ret=$?
+  test $ret -eq 1  # equal
+  examples/ex10 abc abcd  # 0; not equal
+}
+
+echo ex11
+./subx translate init.$OS examples/ex11.subx  -o examples/ex11
+test "$1" = 'record'  || git diff --exit-code examples/ex11
+test $EMULATED  &&  {
+  ./subx run examples/ex11
+  echo
+}
+test $NATIVE  &&  {
+  examples/ex11
+  echo
+}
+
+echo ex12
+./subx translate init.$OS examples/ex12.subx  -o examples/ex12
+test "$1" = 'record'  || git diff --exit-code examples/ex12
+test $EMULATED  &&  ./subx run examples/ex12  # final byte of mmap'd address is well-nigh guaranteed to be 0
+test $NATIVE  &&  examples/ex12
+
+# Larger apps that use the standard library.
+
+echo factorial
+./subx translate init.$OS 0*.subx apps/factorial.subx  -o apps/factorial
+test "$1" = 'record'  ||  git diff --exit-code apps/factorial
+test $EMULATED  &&  {
+  ./subx run apps/factorial  ||  ret=$?
+  test $ret -eq 120  # factorial(5)
+  ./subx run apps/factorial test
+  echo
+}
+test $NATIVE  &&  {
+  apps/factorial  ||  ret=$?
+  test $ret -eq 120  # factorial(5)
+  apps/factorial test
+  echo
+}
+
+echo crenshaw2-1
+./subx translate init.$OS 0*.subx apps/crenshaw2-1.subx  -o apps/crenshaw2-1
+test "$1" = 'record'  ||  git diff --exit-code apps/crenshaw2-1
+test $EMULATED  &&  {
+  ./subx run apps/crenshaw2-1 test
+  echo
+}
+test $NATIVE  &&  {
+  apps/crenshaw2-1 test
+  echo
+}
+
+echo crenshaw2-1b
+./subx translate init.$OS 0*.subx apps/crenshaw2-1b.subx  -o apps/crenshaw2-1b
+test "$1" = 'record'  ||  git diff --exit-code apps/crenshaw2-1b
+test $EMULATED  &&  {
+  ./subx run apps/crenshaw2-1b test
+  echo
+}
+test $NATIVE  &&  {
+  apps/crenshaw2-1b test
+  echo
+}
+
+echo handle
+./subx translate init.$OS 0*.subx apps/handle.subx  -o apps/handle
+test "$1" = 'record'  ||  git diff --exit-code apps/handle
+test $EMULATED  &&  {
+  ./subx run apps/handle > handle.out 2>&1  ||  true
+  grep -q 'lookup succeeded' handle.out  ||  { echo "missing success test"; exit 1; }
+  grep -q 'lookup failed' handle.out  ||  { echo "missing failure test"; exit 1; }
+}
+test $NATIVE  &&  {
+  apps/handle > handle.out 2>&1  ||  true
+  grep -q 'lookup succeeded' handle.out  ||  { echo "missing success test"; exit 1; }
+  grep -q 'lookup failed' handle.out  ||  { echo "missing failure test"; exit 1; }
+}
+
+# Phases of the self-hosted SubX translator.
+
+for phase in hex survey pack assort dquotes tests
+do
+  echo $phase
+  ./subx translate init.$OS 0*.subx apps/subx-params.subx apps/$phase.subx -o apps/$phase
+  test "$1" = 'record'  ||  git diff --exit-code apps/hex
+  test $EMULATED  &&  {
+    ./subx run apps/$phase test
+    echo
+  }
+  test $NATIVE  &&  {
+    apps/$phase test
+    echo
+  }
+done
+
+# Higher-level syntax.
+
+# Certain phases of translation run native beyond this point. We're starting
+# to go beyond functionality of the C++ bootstrap.
+
+echo sigils
+./subx translate init.$OS 0*.subx apps/subx-params.subx apps/sigils.subx  -o apps/sigils
+[ "$1" != record ]  &&  git diff --exit-code apps/sigils
+test $EMULATED  &&  {
+  ./subx run apps/sigils test
+  echo
+}
+test `uname` = 'Linux'  &&  {
+  apps/sigils test
+  echo
+}
+
+echo calls
+cat init.$OS 0*.subx apps/subx-params.subx apps/calls.subx  |  apps/sigils  > a.sigils
+./subx translate a.sigils -o apps/calls
+[ "$1" != record ]  &&  git diff --exit-code apps/calls
+test $EMULATED  &&  {
+  ./subx run apps/calls test
+  echo
+}
+test `uname` = 'Linux'  &&  {
+  apps/calls test
+  echo
+}
+
+echo braces
+cat init.$OS 0*.subx apps/subx-params.subx apps/braces.subx  |  apps/calls  |  apps/sigils  > a.sigils
+./subx translate a.sigils -o apps/braces
+[ "$1" != record ]  &&  git diff --exit-code apps/braces
+test $EMULATED  &&  {
+  ./subx run apps/braces test
+  echo
+}
+test `uname` = 'Linux'  &&  {
+  apps/braces test
+  echo
+}
+
+test $NATIVE  ||  exit 0
+echo "== translating using SubX (native only)"
+
+# example programs
+
+for n in `seq 1 12`
+do
+  echo ex$n
+  ./ntranslate init.$OS examples/ex$n.subx
+  diff examples/ex$n a.elf
+done
+
+# Larger apps that use the standard library.
+
+for app in factorial crenshaw2-1 crenshaw2-1b handle
+do
+  echo $app
+  ./ntranslate init.$OS 0*.subx apps/$app.subx
+  diff apps/$app a.elf
+done
+
+# Phases of the self-hosted SubX translator.
+
+for app in hex survey pack assort dquotes tests sigils calls braces
+do
+  echo $app
+  ./ntranslate init.$OS 0*.subx apps/subx-params.subx apps/$app.subx
+  diff apps/$app a.elf
+done
+
+exit 0

@@ -16,39 +16,15 @@ function! HighlightTangledFile()
   syntax match traceAbsent /^-.*/
   highlight traceAbsent ctermfg=darkred
   syntax match tangleScenarioSetup /^\s*% .*/ | highlight link tangleScenarioSetup SpecialChar
-
   highlight Special ctermfg=160
-
-  " Our C++ files can have Mu code in scenarios, so highlight Mu comments like
-  " regular comments.
-  syntax match muComment /#.*$/
-  highlight link muComment Comment
-  syntax match muSalientComment /##.*$/ | highlight link muSalientComment SalientComment
-  syntax match muCommentedCode /#? .*$/ | highlight link muCommentedCode CommentedCode
-  set comments+=n:#
-  " Some other bare-bones Mu highlighting.
-  syntax match muLiteral %[^ ]\+:literal/[^ ,]*\|[^ ]\+:literal\>%
-  syntax match muLiteral %[^ ]\+:label/[^ ,]*\|[^ ]\+:label\>%
-  syntax match muLiteral %[^ ]\+:type/[^ ,]*\|[^ ]\+:type\>%
-  syntax match muLiteral %[^ ]\+:offset/[^ ,]*\|[^ ]\+:offset\>%
-  syntax match muLiteral %[^ ]\+:variant/[^ ,]*\|[^ ]\+:variant\>%
-  syntax match muLiteral % true\(\/[^ ]*\)\?\| false\(\/[^ ]*\)\?%  " literals will never be the first word in an instruction
-  syntax match muLiteral % null\(\/[^ ]*\)\?%
-  highlight link muLiteral Constant
-  syntax match muAssign " <- \|\<raw\>" | highlight link muAssign SpecialChar
-  " common keywords
-  syntax match muRecipe "^recipe\>\|^recipe!\>\|^def\>\|^def!\>\|^before\>\|^after\>\| -> " | highlight muRecipe ctermfg=208
-  syntax match muScenario "^scenario\>" | highlight muScenario ctermfg=34
-  syntax match muPendingScenario "^pending-scenario\>" | highlight link muPendingScenario SpecialChar
-  syntax match muData "^type\>\|^container\>\|^exclusive-container\>" | highlight muData ctermfg=226
 
   syntax match subxString %"[^"]*"% | highlight link subxString Constant
   " match globals but not registers like 'EAX'
   syntax match subxGlobal %\<[A-Z][a-z0-9_-]*\>% | highlight link subxGlobal SpecialChar
 endfunction
 augroup LocalVimrc
-  autocmd BufRead,BufNewFile *.mu set ft=mu
   autocmd BufRead,BufNewFile *.cc call HighlightTangledFile()
+  autocmd BufRead,BufNewFile *.subx set ft=subx
 augroup END
 
 " Scenarios considered:
@@ -58,7 +34,6 @@ augroup END
 "   opening a second file in a new or existing window (shouldn't mess up existing highlighting)
 "   reloading an existing file (shouldn't mess up existing highlighting)
 
-" assumes CWD is subx/
 command! -nargs=1 E call EditSubx("edit", <f-args>)
 if exists("&splitvertical")
   command! -nargs=1 S call EditSubx("vert split", <f-args>)
@@ -88,20 +63,50 @@ function! GrepSubX(regex)
 endfunction
 command! -nargs=1 G call GrepSubX(<q-args>)
 
-" temporary helpers while we port https://github.com/akkartik/crenshaw to apps/crenshaw*.subx
-command! -nargs=1 C exec "E crenshaw".<f-args>
-command! -nargs=1 CS exec "S crenshaw".<f-args>
-command! -nargs=1 CH exec "H crenshaw".<f-args>
-function! Orig()
-  let l:p = expand("%:t:r")
-  if l:p =~ "^crenshaw\\d*-\\d*$"
-    exec "vert split crenshaw/tutor" . substitute(expand("%:t:r"), "^crenshaw\\(\\d*\\)-\\(\\d*\\)$", "\\1.\\2", "") . ".pas"
-  endif
-endfunction
-command! O call Orig()
-
 if exists("&splitvertical")
   command! -nargs=0 P hor split opcodes
 else
   command! -nargs=0 P split opcodes
+endif
+
+" useful for inspecting just the control flow in a trace
+" see https://github.com/akkartik/mu/blob/master/Readme.md#a-few-hints-for-debugging
+" the '-a' is because traces can sometimes contain unprintable characters that bother grep
+command! -nargs=0 L exec "%!grep -a label |grep -v clear-stream:loop"
+
+" run test around cursor
+" Unfortunately this only works with Linux at the moment.
+" Some compiler passes take too long to run in emulated mode.
+if empty($TMUX)
+  " hack: need to move cursor at outside function at start (`{j0`), but inside function at end (`<C-o>`)
+  " this solution is unfortunate, but seems forced:
+  "   can't put initial cursor movement inside function because we rely on <C-r><C-w> to grab word at cursor
+  "   can't put final cursor movement out of function because that disables the wait for <CR> prompt; function must be final operation of map
+  "   can't avoid the function because that disables the wait for <CR> prompt
+  noremap <Leader>t {:keeppatterns /^[^ #]<CR>:call RunTestMoveCursor("<C-r><C-w>")<CR>
+  function RunTestMoveCursor(arg)
+    exec "!./run_one_test ".expand("%")." ".a:arg
+    exec "normal \<C-o>"
+  endfunction
+else
+  " we have tmux; we don't need to show any output in the Vim pane so life is simpler
+  " assume the left-most window is for the shell
+  noremap <Leader>t {:keeppatterns /^[^ #]<CR>:silent! call RunTestInFirstPane("<C-r><C-w>")<CR><C-o>
+  function RunTestInFirstPane(arg)
+    call RunInFirstPane("./run_one_test ".expand("%")." ".a:arg)
+  endfunction
+  function RunInFirstPane(arg)
+    exec "!tmux select-pane -t :0.0"
+    exec "!tmux send-keys '".a:arg."' C-m"
+    exec "!tmux last-pane"
+    " for some reason my screen gets messed up, so force a redraw
+    exec "!tmux send-keys 'C-l'"
+  endfunction
+endif
+
+set switchbuf=useopen
+if exists("&splitvertical")
+  command! -nargs=0 T badd last_run | sbuffer last_run
+else
+  command! -nargs=0 T badd last_run | vert sbuffer last_run
 endif

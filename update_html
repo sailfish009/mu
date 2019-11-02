@@ -1,5 +1,6 @@
 #!/bin/bash
 # Regenerate html files.
+# If given a single argument, regenerate just that file.
 
 set -e
 
@@ -25,28 +26,8 @@ convert_html() {
 
   sed -i 's/^\* { \(.*\) }/* { font-size:12pt; \1 }/g' $1.html
   sed -i 's/^body { \(.*\) }/body { font-size:12pt; \1 }/g' $1.html
-  # turn most code grey
-  sed -i 's/#eeeeee/#aaaaaa/g' $1.html
-  # line numbers are darker than normal
-  sed -i 's/^\.LineNr .*/.LineNr { color:#444444; }/' $1.html  # line numbers
-  # tweak contrast for remaining colors
-  sed -i 's/^\.Constant .*/.Constant { color:#00a0a0; }/' $1.html
-  sed -i 's/^\.muControl .*/.muControl { color:#c0a020; }/' $1.html
-  # comment colors manually adjusted for better contrast; browser has >256 colors
-  sed -i 's/^\.Delimiter .*/.Delimiter { color:#800080; }/' $1.html  # not meant to be read; can be lower-contrast
-  sed -i 's/^\.PreProc .*/.PreProc { color:#800080; }/' $1.html  # not meant to be read; can be lower-contrast
-  sed -i 's/^\.Identifier .*/.Identifier { color:#c0a020; }/' $1.html  # same as muControl
-  sed -i 's/^\.Special .*/.Special { color:#c00000; }/' $1.html  # same as traceAbsent..
-  sed -i 's/^\.subxH1Comment.*/.subxH1Comment { color:#00ffff; }/' $1.html
-  sed -i 's/^\.subxComment.*/.subxComment { color:#16bfff; }/' $1.html
-  sed -i 's/^\.subxS1Comment.*/.subxS1Comment { color:#2d8cff; }/' $1.html
-  sed -i 's/^\.subxS2Comment.*/.subxS2Comment { color:#4466ff; }/' $1.html  # slightly too dark
-  # comment links in regular colors, just underlined
-  sed -i '/^body {/ a  .subxH1Comment a { color:inherit; }' $1.html
-  sed -i '/^body {/ a  .subxH2Comment a { color:inherit; }' $1.html
-  sed -i '/^body {/ a  .subxComment a { color:inherit; }' $1.html
-  sed -i '/^body {/ a  .subxS1Comment a { color:inherit; }' $1.html
-  sed -i '/^body {/ a  .subxS2Comment a { color:inherit; }' $1.html
+
+  sed -i '/^body {/a a { color:inherit; }' $1.html
 
   # switch unicode characters around in the rendered html
   #   the ones we have in the source files render double-wide in html
@@ -57,43 +38,35 @@ convert_html() {
   mv -i $1.html html/`dirname $1`
 }
 
-ctags -x *.cc  |grep -v "^operator \| member \| variable "  > /tmp/tags
+ctags -x *.cc  |grep -v '^. '  > /tmp/tags  # don't hyperlink every 'i' to the integer register variant
 for f in *.cc
 do
+  test $# -gt 0  &&  test $1 != $f  &&  continue
   process $f
 done
 
-ctags -x [0-9]*.mu  > /tmp/tags
-for f in [0-9]*.mu
+for f in examples/*.subx
 do
+  test $# -gt 0  &&  test $1 != $f  &&  continue
+  ( cd examples
+    ctags -x `basename $f` > /tmp/tags
+  )
   process $f
 done
 
-for f in [a-zA-Z]*.mu
+ctags -x *.subx  > /tmp/tags
+for f in *.subx
 do
-  ctags -x [0-9]*.mu $f  > /tmp/tags
+  test $# -gt 0  &&  test $1 != $f  &&  continue
   process $f
 done
 
-( cd edit
-  ctags -x ../[0-9]*.mu *.mu  > /tmp/tags
-)
-for f in edit/*.mu
+for f in apps/*.subx
 do
-  process $f
-done
-
-( cd subx
-  ctags -x *.cc  |grep -v '^. '  > /tmp/tags  # don't hyperlink every 'i' to the integer register variant
-)
-for f in subx/*.cc
-do
-  process $f
-done
-
-echo > /tmp/tags
-for f in subx/*.subx subx/examples/*.subx subx/apps/*.subx
-do
+  test $# -gt 0  &&  test $1 != $f  &&  continue
+  ( cd apps
+    ctags -x ../*.subx `basename $f` > /tmp/tags
+  )
   process $f
 done
 

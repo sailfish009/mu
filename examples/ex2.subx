@@ -1,0 +1,20 @@
+# Add 1 and 1, and return the result in the exit code.
+#
+# To run:
+#   $ ./subx translate init.linux examples/ex2.subx -o examples/ex2
+#   $ ./subx run examples/ex2
+# Expected result:
+#   $ echo $?
+#   2
+
+== code
+
+Entry:
+# ebx = 1
+bb/copy-to-ebx  1/imm32
+# increment ebx
+43/increment-ebx
+# exit(ebx)
+e8/call  syscall_exit/disp32
+
+# . . vim:nowrap:textwidth=0

@@ -1,0 +1,284 @@
+# Generate code for a new function called 'run-tests' which calls in sequence
+# all functions starting with 'test-'.
+#
+# To build:
+#   $ ./subx translate init.linux 0*.subx apps/subx-params.subx apps/tests.subx  -o apps/tests
+
+== code
+#   instruction                     effective address                                                   register    displacement    immediate
+# . op          subop               mod             rm32          base        index         scale       r32
+# . 1-3 bytes   3 bits              2 bits          3 bits        3 bits      3 bits        2 bits      2 bits      0/1/2/4 bytes   0/1/2/4 bytes
+
+Entry:  # run tests if necessary, convert stdin if not
+    # . prologue
+    89/copy                         3/mod/direct    5/rm32/ebp    .           .             .           4/r32/esp   .               .                 # copy esp to ebp
+
+    # initialize heap
+    # . Heap = new-segment(Heap-size)
+    # . . push args
+    68/push  Heap/imm32
+    68/push  Heap-size/imm32
+    # . . call
+    e8/call  new-segment/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+    # initialize-trace-stream(256KB)
+    # . . push args
+    68/push  0x40000/imm32/256KB
+    # . . call
+    e8/call  initialize-trace-stream/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               4/imm32           # add to esp
+
+    # - if argc > 1 and argv[1] == "test", then return run_tests()
+    # if (argc <= 1) goto run-main
+    81          7/subop/compare     1/mod/*+disp8   5/rm32/ebp    .           .             .           .           0/disp8         1/imm32           # compare *ebp
+    7e/jump-if-lesser-or-equal  $subx-tests-main:interactive/disp8
+    # if (!kernel-string-equal?(argv[1], "test")) goto run-main
+    # . eax = kernel-string-equal?(argv[1], "test")
+    # . . push args
+    68/push  "test"/imm32
+    ff          6/subop/push        1/mod/*+disp8   5/rm32/ebp    .           .             .           .           8/disp8         .                 # push *(ebp+8)
+    # . . call
+    e8/call  kernel-string-equal?/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+    # . if (eax == 0) goto run-main
+    3d/compare-eax-and  0/imm32
+    74/jump-if-equal  $subx-tests-main:interactive/disp8
+    # run-tests()
+    e8/call  run-tests/disp32
+    # syscall(exit, *Num-test-failures)
+    8b/copy                         0/mod/indirect  5/rm32/.disp32            .             .           3/r32/ebx   Num-test-failures/disp32          # copy *Num-test-failures to ebx
+    eb/jump  $subx-tests-main:end/disp8
+$subx-tests-main:interactive:
+    # - otherwise convert stdin
+    # subx-gen-run-tests(Stdin, Stdout)
+    # . . push args
+    68/push  Stdout/imm32
+    68/push  Stdin/imm32
+    # . . call
+    e8/call  subx-gen-run-tests/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+    # syscall(exit, 0)
+    bb/copy-to-ebx  0/imm32
+$subx-tests-main:end:
+    b8/copy-to-eax  1/imm32/exit
+    cd/syscall  0x80/imm8
+
+subx-gen-run-tests:  # in : (address buffered-file), out : (address buffered-file)
+    # pseudocode
+    #   bool tests-found = false
+    #   var line : (stream byte 512)
+    #   var new-code-segment : (handle stream byte) = new-stream(Segment-size, 1)
+    #   write(new-code-segment, "\n== code\n")
+    #   write(new-code-segment, "run-tests:\n")
+    #   while true
+    #     clear-stream(line)
+    #     read-line-buffered(in, line)
+    #     if (line->write == 0) break               # end of file
+    #     var word-slice = next-word(line)
+    #     if is-label?(word-slice)
+    #       if slice-starts-with?(word-slice, "test-")
+    #         tests-found = true
+    #         write(new-code-segment, "  e8/call  ")
+    #         write-slice(new-code-segment, word-slice)
+    #         write(new-code-segment, "/disp32\n")
+    #     rewind-stream(line)
+    #     write-stream-data(out, line)
+    #   if tests-found
+    #     write(new-code-segment, "  c3/return\n")
+    #     write-stream-data(out, new-code-segment)
+    #   flush(out)
+    #
+    # . prologue
+    55/push-ebp
+    89/copy                         3/mod/direct    5/rm32/ebp    .           .             .           4/r32/esp   .               .                 # copy esp to ebp
+    # . save registers
+    50/push-eax
+    51/push-ecx
+    52/push-edx
+    53/push-ebx
+    57/push-edi
+    # var line/ecx : (address stream byte) = stream(512)
+    81          5/subop/subtract    3/mod/direct    4/rm32/esp    .           .             .           .           .               0x200/imm32       # subtract from esp
+    68/push  0x200/imm32/length
+    68/push  0/imm32/read
+    68/push  0/imm32/write
+    89/copy                         3/mod/direct    1/rm32/ecx    .           .             .           4/r32/esp   .               .                 # copy esp to ecx
+    # var word-slice/edx = {0, 0}
+    68/push  0/imm32/end
+    68/push  0/imm32/start
+    89/copy                         3/mod/direct    2/rm32/edx    .           .             .           4/r32/esp   .               .                 # copy esp to edx
+    # tests-found?/ebx = false
+    31/xor                          3/mod/direct    3/rm32/ebx    .           .             .           3/r32/ebx   .               .                 # clear ebx
+    # new-code-segment/edi = new-stream(Heap, Segment-size, 1)
+    # . eax = new-stream(Heap, Segment-size, 1)
+    # . . push args
+    68/push  1/imm32
+    ff          6/subop/push        0/mod/indirect  5/rm32/.disp32            .             .           .           Segment-size/disp32               # push *Segment-size
+    68/push  Heap/imm32
+    # . . call
+    e8/call  new-stream/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               0xc/imm32         # add to esp
+    # . edi = eax
+    89/copy                         3/mod/direct    7/rm32/edi    .           .             .           0/r32/eax   .               .                 # copy eax to edi
+    # write(new-code-segment, "\n== code\n")
+    # . . push args
+    68/push  "\n== code\n"/imm32
+    57/push-edi
+    # . . call
+    e8/call  write/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+    # write(new-code-segment, "run-tests:\n")
+    # . . push args
+    68/push  "run-tests:\n"/imm32
+    57/push-edi
+    # . . call
+    e8/call  write/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+$subx-gen-run-tests:loop:
+    # clear-stream(line)
+    # . . push args
+    51/push-ecx
+    # . . call
+    e8/call  clear-stream/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               4/imm32           # add to esp
+    # read-line-buffered(in, line)
+    # . . push args
+    51/push-ecx
+    ff          6/subop/push        1/mod/*+disp8   5/rm32/ebp    .           .             .           .           8/disp8         .                 # push *(ebp+8)
+    # . . call
+    e8/call  read-line-buffered/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+$subx-gen-run-tests:check0:
+    # if (line->write == 0) break
+    81          7/subop/compare     0/mod/indirect  1/rm32/ecx    .           .             .           .           .               0/imm32           # compare *ecx
+    0f 84/jump-if-equal  $subx-gen-run-tests:break/disp32
+    # next-word(line, word-slice)
+    # . . push args
+    52/push-edx
+    51/push-ecx
+    # . . call
+    e8/call  next-word/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+$subx-gen-run-tests:check-for-label:
+    # if (!is-label?(word-slice)) continue
+    # . eax = is-label?(word-slice)
+    # . . push args
+    52/push-edx
+    # . . call
+    e8/call  is-label?/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               4/imm32           # add to esp
+    # . if (eax == 0) continue
+    3d/compare-eax-and  0/imm32
+    74/jump-if-equal  $subx-gen-run-tests:continue/disp8
+$subx-gen-run-tests:check-label-prefix:
+    # strip trailing ':' from word-slice
+    ff          1/subop/decrement   1/mod/*+disp8   2/rm32/edx    .           .             .           .           4/disp8         .                 # decrement *(edx+4)
+    # if !slice-starts-with?(word-slice, "test-") continue
+    # . . push args
+    68/push  "test-"/imm32
+    52/push-edx
+    # . . call
+    e8/call  slice-starts-with?/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+    # . if (eax == 0) break
+    3d/compare-eax-and  0/imm32
+    74/jump-if-equal  $subx-gen-run-tests:continue/disp8
+$subx-gen-run-tests:call-test-function:
+    # tests-found? = true
+    bb/copy-to-ebx  1/imm32/true
+    # write(new-code-segment, "  e8/call  ")
+    # . . push args
+    68/push  "  e8/call  "/imm32
+    57/push-edi
+    # . . call
+    e8/call  write/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+    # write-slice(new-code-segment, word-slice)
+    # . . push args
+    52/push-edx
+    57/push-edi
+    # . . call
+    e8/call  write-slice/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+    # write(new-code-segment, "/disp32\n")
+    # . . push args
+    68/push  "/disp32\n"/imm32
+    57/push-edi
+    # . . call
+    e8/call  write/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+$subx-gen-run-tests:continue:
+    # rewind-stream(line)
+    # . . push args
+    51/push-ecx
+    # . . call
+    e8/call  rewind-stream/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               4/imm32           # add to esp
+    # write-stream-data(out, line)
+    # . . push args
+    51/push-ecx
+    ff          6/subop/push        1/mod/*+disp8   5/rm32/ebp    .           .             .           .           0xc/disp8       .                 # push *(ebp+12)
+    # . . call
+    e8/call  write-stream-data/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+    # loop
+    e9/jump  $subx-gen-run-tests:loop/disp32
+$subx-gen-run-tests:break:
+    # if (!tests-found?) goto end
+    81          7/subop/compare     3/mod/direct    3/rm32/ebx    .           .             .           .           .               0/imm32           # compare ebx
+    74/jump-if-equal  $subx-gen-run-tests:end/disp8
+    # write(new-code-segment, "  c3/return\n")
+    # . . push args
+    68/push  "  c3/return\n"/imm32
+    57/push-edi
+    # . . call
+    e8/call  write/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+    # write-stream-data(out, new-code-segment)
+    # . . push args
+    57/push-edi
+    ff          6/subop/push        1/mod/*+disp8   5/rm32/ebp    .           .             .           .           0xc/disp8       .                 # push *(ebp+12)
+    # . . call
+    e8/call  write-stream-data/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               8/imm32           # add to esp
+$subx-gen-run-tests:end:
+    # flush(out)
+    # . . push args
+    ff          6/subop/push        1/mod/*+disp8   5/rm32/ebp    .           .             .           .           0xc/disp8       .                 # push *(ebp+12)
+    # . . call
+    e8/call  flush/disp32
+    # . . discard args
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               4/imm32           # add to esp
+    # . reclaim locals
+    81          0/subop/add         3/mod/direct    4/rm32/esp    .           .             .           .           .               0x214/imm32       # add to esp
+    # . restore registers
+    5f/pop-to-edi
+    5b/pop-to-ebx
+    5a/pop-to-edx
+    59/pop-to-ecx
+    58/pop-to-eax
+    # . epilogue
+    89/copy                         3/mod/direct    4/rm32/esp    .           .             .           5/r32/ebp   .               .                 # copy ebp to esp
+    5d/pop-to-ebp
+    c3/return
+
+# . . vim:nowrap:textwidth=0

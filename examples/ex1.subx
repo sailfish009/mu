@@ -1,0 +1,18 @@
+# First program: same as https://www.muppetlabs.com/~breadbox/software/tiny/teensy.html
+# Just return 42.
+#
+# To run:
+#   $ ./subx translate init.linux examples/ex1.2.subx -o examples/ex1
+#   $ ./subx run examples/ex1
+# Expected result:
+#   $ echo $?
+#   42
+
+== code
+
+Entry:
+# exit(42)
+bb/copy-to-ebx  2a/imm32  # 42 in hex
+e8/call  syscall_exit/disp32
+
+# . . vim:nowrap:textwidth=0
